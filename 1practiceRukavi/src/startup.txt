@@ -1,4 +1,3 @@
-clear
 ls
 cd folder1
 ls
@@ -6,4 +5,4 @@ uniq textfile.txt
 cd ..
 rm file_to_delete.txt
 vfs-save saved_vfs_folder
-vfs-load another_folder
+//vfs-load another_folder

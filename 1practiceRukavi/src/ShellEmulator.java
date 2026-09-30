@@ -1,4 +1,3 @@
-import javax.swing.*;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -7,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import javax.swing.*;
 
 class VfsNode {
     String name;
@@ -38,8 +38,15 @@ public class ShellEmulator {
         File vfsSource = new File(vfsPath);
         String vfsName = vfsSource.exists() ? vfsSource.getName() : "Unknown_VFS";
 
+        initGui(vfsName);
         loadVfsFromDisk(vfsPath);
 
+        if (scriptPath != null && !scriptPath.isEmpty()) {
+            runStartupScript(scriptPath);
+        }
+    }
+
+    private void initGui(String vfsName) {
         frame = new JFrame("VFS: " + vfsName);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setSize(700, 500);
@@ -50,16 +57,19 @@ public class ShellEmulator {
         outputArea.setBackground(Color.BLACK);
         outputArea.setForeground(Color.LIGHT_GRAY);
 
-        JScrollPane scrollPane = new JScrollPane(outputArea);
-        frame.add(scrollPane, BorderLayout.CENTER);
+        frame.add(new JScrollPane(outputArea), BorderLayout.CENTER);
+        frame.add(createInputField(), BorderLayout.SOUTH);
 
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
+    }
+
+    private JTextField createInputField() {
         inputField = new JTextField();
         inputField.setFont(new Font("Monospaced", Font.PLAIN, 14));
         inputField.setBackground(Color.DARK_GRAY);
         inputField.setForeground(Color.WHITE);
         inputField.setCaretColor(Color.WHITE);
-        frame.add(inputField, BorderLayout.SOUTH);
-
         inputField.addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -72,13 +82,7 @@ public class ShellEmulator {
                 }
             }
         });
-
-        frame.setLocationRelativeTo(null);
-        frame.setVisible(true);
-
-        if (scriptPath != null && !scriptPath.isEmpty()) {
-            runStartupScript(scriptPath);
-        }
+        return inputField;
     }
 
     private void print(String text) {
@@ -92,54 +96,33 @@ public class ShellEmulator {
         String command = parts[0];
 
         switch (command) {
-            case "exit":
-                System.exit(0);
-                break;
-            case "clear":
-                outputArea.setText("");
-                break;
-            case "ls":
-                executeLs();
-                break;
-            case "cd":
-                if (parts.length > 1) {
-                    executeCd(parts[1]);
-                } else {
-                    print("Error: cd requires an argument");
-                }
-                break;
-            case "uniq":
-                if (parts.length > 1) {
-                    executeUniq(parts[1]);
-                } else {
-                    print("Error: uniq requires a file name");
-                }
-                break;
-            case "rm":
-                if (parts.length > 1) {
-                    executeRm(parts[1]);
-                } else {
-                    print("Error: rm requires a file/directory name");
-                }
-                break;
-            case "vfs-save":
-                if (parts.length > 1) {
-                    executeVfsSave(parts[1]);
-                } else {
-                    print("Error: vfs-save requires a path");
-                }
-                break;
-            case "vfs-load":
-                if (parts.length > 1) {
-                    loadVfsFromDisk(parts[1]);
-                    File vfsSource = new File(parts[1]);
-                    frame.setTitle("VFS: " + (vfsSource.exists() ? vfsSource.getName() : "Unknown_VFS"));
-                } else {
-                    print("Error: vfs-load requires a path");
-                }
-                break;
-            default:
-                print("Error: command not found: " + command);
+            case "exit": System.exit(0); break;
+            case "clear": outputArea.setText(""); break;
+            case "ls": executeLs(); break;
+            case "cd": parseAndRun(parts, "cd requires an argument", this::executeCd); break;
+            case "uniq": parseAndRun(parts, "uniq requires a file name", this::executeUniq); break;
+            case "rm": parseAndRun(parts, "rm requires a file/directory name", this::executeRm); break;
+            case "vfs-save": parseAndRun(parts, "vfs-save requires a path", this::executeVfsSave); break;
+            case "vfs-load": executeVfsLoad(parts); break;
+            default: print("Error: command not found: " + command); break;
+        }
+    }
+
+    private void parseAndRun(String[] parts, String errorMsg, java.util.function.Consumer<String> action) {
+        if (parts.length > 1) {
+            action.accept(parts[1]);
+        } else {
+            print("Error: " + errorMsg);
+        }
+    }
+
+    private void executeVfsLoad(String[] parts) {
+        if (parts.length > 1) {
+            loadVfsFromDisk(parts[1]);
+            File vfsSource = new File(parts[1]);
+            frame.setTitle("VFS: " + (vfsSource.exists() ? vfsSource.getName() : "Unknown_VFS"));
+        } else {
+            print("Error: vfs-load requires a path");
         }
     }
 
@@ -247,34 +230,27 @@ public class ShellEmulator {
     }
 
     private VfsNode resolvePath(String path) {
-        if (path.equals("/")) return root;
+        if ("/".equals(path)) return root;
 
         VfsNode node = path.startsWith("/") ? root : currentDir;
-        String[] parts = path.split("/");
-
-        for (String part : parts) {
-            if (part.isEmpty() || part.equals(".")) {
-                continue;
-            }
-            if (part.equals("..")) {
-                if (node.parent != null) {
-                    node = node.parent;
-                }
-            } else {
-                VfsNode nextNode = null;
-                for (VfsNode child : node.children) {
-                    if (child.name.equals(part)) {
-                        nextNode = child;
-                        break;
-                    }
-                }
-                if (nextNode == null) {
-                    return null;
-                }
-                node = nextNode;
-            }
+        for (String part : path.split("/")) {
+            node = stepToNode(node, part);
+            if (node == null) return null;
         }
         return node;
+    }
+
+    private VfsNode stepToNode(VfsNode current, String part) {
+        if (part.isEmpty() || ".".equals(part)) return current;
+        if ("..".equals(part)) return current.parent != null ? current.parent : current;
+        return findChild(current, part);
+    }
+
+    private VfsNode findChild(VfsNode parent, String name) {
+        for (VfsNode child : parent.children) {
+            if (child.name.equals(name)) return child;
+        }
+        return null;
     }
 
     private void runStartupScript(String scriptPath) {
