@@ -1,12 +1,35 @@
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 public class DependencyVisualizer {
     public static void main(String[] args) {
         try {
             Config config = parseArgs(args);
             validateConfig(config);
-            printConfig(config);
-        } catch (IllegalArgumentException e) {
-            System.err.println("Ошибка параметров: " + e.getMessage());
-            printHelp();
+            
+            System.out.println("Извлечение зависимостей для: " + config.packageName);
+            List<String> dependencies = fetchDependencies(config.packageName, config);
+            
+            System.out.println("\nПрямые зависимости пакета '" + config.packageName + "':");
+            if (dependencies.isEmpty()) {
+                System.out.println("  (зависимостей нет)");
+            } else {
+                for (String dep : dependencies) {
+                    System.out.println("  - " + dep);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Ошибка: " + e.getMessage());
             System.exit(1);
         }
     }
@@ -24,47 +47,90 @@ public class DependencyVisualizer {
             return index;
         }
         if (index + 1 >= args.length) {
-            throw new IllegalArgumentException("Отсутствует значение для параметра " + arg);
+            throw new IllegalArgumentException("Нет значения для параметра " + arg);
         }
         return assignConfigValue(arg, args[index + 1], config, index);
     }
     private static int assignConfigValue(String key, String value, Config config, int index) {
-        if ("--pkg".equals(key)) {
-            config.packageName = value;
-        } else if ("--repo".equals(key)) {
-            config.repoPath = value;
-        } else if ("--out".equals(key)) {
-            config.outputFileName = value;
-        } else {
-            throw new IllegalArgumentException("Неизвестный параметр: " + key);
+        switch (key) {
+            case "--pkg": config.packageName = value; break;
+            case "--repo": config.repoPath = value; break;
+            case "--out": config.outputFileName = value; break;
+            default: throw new IllegalArgumentException("Неизвестный параметр: " + key);
         }
         return index + 1;
     }
     private static void validateConfig(Config config) {
-        if (config.packageName == null || config.packageName.isEmpty()) {
-            throw new IllegalArgumentException("Не задано имя пакета (--pkg)");
-        }
-        if (config.repoPath == null || config.repoPath.isEmpty()) {
-            throw new IllegalArgumentException("Не задан путь к репозиторию (--repo)");
-        }
-        if (config.outputFileName == null || config.outputFileName.isEmpty()) {
-            throw new IllegalArgumentException("Не задано имя выходного файла (--out)");
+        if (config.packageName == null) throw new IllegalArgumentException("Не задан --pkg");
+        if (config.repoPath == null) throw new IllegalArgumentException("Не задан --repo");
+        if (config.outputFileName == null) throw new IllegalArgumentException("Не задан --out");
+    }
+    private static List<String> fetchDependencies(String packageName, Config config) {
+        if (config.isTestMode) {
+            return fetchFromTestFile(packageName, config.repoPath);
+        } else {
+            return fetchFromRegistry(packageName, config.repoPath);
         }
     }
-    private static void printConfig(Config config) {
-        System.out.println("Конфигурация успешно загружена:");
-        System.out.println("Package Name = " + config.packageName);
-        System.out.println("Repository = " + config.repoPath);
-        System.out.println("Test Mode = " + config.isTestMode);
-        System.out.println("Output File = " + config.outputFileName);
+    private static List<String> fetchFromTestFile(String packageName, String filePath) {
+        List<String> deps = new ArrayList<>();
+        try {
+            List<String> lines = Files.readAllLines(Paths.get(filePath));
+            for (String line : lines) {
+                if (line.startsWith(packageName + ":")) {
+                    String[] parts = line.substring(packageName.length() + 1).split(",");
+                    for (String part : parts) {
+                        String dep = part.trim();
+                        if (!dep.isEmpty()) deps.add(dep);
+                    }
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Ошибка чтения тестового файла: " + e.getMessage());
+        }
+        return deps;
     }
-    private static void printHelp() {
-        System.out.println("Использование: java DependencyVisualizer [опции]");
-        System.out.println("Опции:");
-        System.out.println("  --pkg <имя>      Имя анализируемого пакета (обязательно)");
-        System.out.println("  --repo <путь>    URL репозитория или путь к тестовому файлу (обязательно)");
-        System.out.println("  --out <файл>     Имя генерируемого файла изображения (обязательно)");
-        System.out.println("  --test           Включить режим работы с тестовым репозиторием");
+    private static List<String> fetchFromRegistry(String packageName, String repoUrl) {
+        String version = getLatestVersion(packageName, repoUrl);
+        String depsUrl = repoUrl + "/" + packageName + "/" + version + "/dependencies";
+        String json = sendHttpGet(depsUrl);
+        return parseDependenciesFromJson(json);
+    }
+    private static String getLatestVersion(String packageName, String repoUrl) {
+        String url = repoUrl + "/" + packageName;
+        String json = sendHttpGet(url);
+        Matcher matcher = Pattern.compile("\"max_version\":\"([^\"]+)\"").matcher(json);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        throw new RuntimeException("Не удалось определить версию пакета " + packageName);
+    }
+    private static List<String> parseDependenciesFromJson(String json) {
+        Set<String> deps = new LinkedHashSet<>();
+        // Ищем ID пакетов в массиве dependencies
+        Matcher matcher = Pattern.compile("\"crate_id\":\"([^\"]+)\"").matcher(json);
+        while (matcher.find()) {
+            deps.add(matcher.group(1));
+        }
+        return new ArrayList<>(deps);
+    }
+    private static String sendHttpGet(String urlString) {
+        try {
+            URL url = new URL(urlString);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("User-Agent", "ConfigPractice22/1.0");
+            
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()))) {
+                StringBuilder result = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) result.append(line);
+                return result.toString();
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Ошибка HTTP: " + e.getMessage());
+        }
     }
     private static class Config {
         String packageName;

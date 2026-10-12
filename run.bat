@@ -10,15 +10,11 @@ if errorlevel 1 (
 )
 
 echo.
-echo --- Тест 1: Успешный парсинг аргументов ---
-java -cp src DependencyVisualizer --pkg reqwest --repo tests\test_repo.txt --out graph.svg --test
+echo --- Тест 1: Тестовый локальный репозиторий (Пакет A) ---
+java -cp src DependencyVisualizer --pkg A --repo tests\test_repo.txt --out graph.svg --test
 
 echo.
-echo --- Тест 2: Ошибка (отсутствует аргумент) ---
-java -cp src DependencyVisualizer --pkg reqwest --out graph.svg
-
-echo.
-echo --- Тест 3: Ошибка (неизвестный параметр) ---
-java -cp src DependencyVisualizer --pkg reqwest --repo url --out graph.svg --unknown param
+echo --- Тест 2: Реальный репозиторий Cargo (Пакет reqwest) ---
+java -cp src DependencyVisualizer --pkg reqwest --repo https://crates.io/api/v1/crates --out graph.svg
 
 pause
