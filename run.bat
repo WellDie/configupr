@@ -14,7 +14,7 @@ echo --- Тест 1: Тестовый локальный репозиторий 
 java -cp src DependencyVisualizer --pkg A --repo tests\test_repo.txt --out graph.svg --test
 
 echo.
-echo --- Тест 2: Реальный репозиторий Cargo (Пакет reqwest) ---
-java -cp src DependencyVisualizer --pkg reqwest --repo https://crates.io/api/v1/crates --out graph.svg
+echo --- Тест 2: Реальный репозиторий Cargo (Пакет serde) ---
+java -cp src DependencyVisualizer --pkg serde --repo https://crates.io/api/v1/crates --out graph.svg
 
 pause
