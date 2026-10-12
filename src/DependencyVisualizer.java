@@ -2,36 +2,57 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 public class DependencyVisualizer {
     public static void main(String[] args) {
         try {
             Config config = parseArgs(args);
             validateConfig(config);
             
-            System.out.println("Извлечение зависимостей для: " + config.packageName);
-            List<String> dependencies = fetchDependencies(config.packageName, config);
+            System.out.println("Построение графа (BFS) для: " + config.packageName);
+            List<String> edges = buildGraphBFS(config.packageName, config);
             
-            System.out.println("\nПрямые зависимости пакета '" + config.packageName + "':");
-            if (dependencies.isEmpty()) {
+            System.out.println("\nРебра графа зависимостей:");
+            if (edges.isEmpty()) {
                 System.out.println("  (зависимостей нет)");
             } else {
-                for (String dep : dependencies) {
-                    System.out.println("  - " + dep);
+                for (String edge : edges) {
+                    System.out.println("  " + edge);
                 }
             }
         } catch (Exception e) {
             System.err.println("Ошибка: " + e.getMessage());
             System.exit(1);
         }
+    }
+    private static List<String> buildGraphBFS(String rootPackage, Config config) {
+        List<String> edges = new ArrayList<>();
+        Queue<String> queue = new LinkedList<>();
+        Set<String> visited = new HashSet<>();
+
+        queue.add(rootPackage);
+        visited.add(rootPackage);
+
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            List<String> deps = fetchDependencies(current, config);
+
+            for (String dep : deps) {
+                edges.add(current + " -> " + dep);
+                if (!visited.contains(dep)) {
+                    visited.add(dep);
+                    queue.add(dep);
+                }
+            }
+        }
+        return edges;
     }
     private static Config parseArgs(String[] args) {
         Config config = new Config();
@@ -87,15 +108,20 @@ public class DependencyVisualizer {
                 }
             }
         } catch (IOException e) {
-            throw new RuntimeException("Ошибка чтения тестового файла: " + e.getMessage());
+            throw new RuntimeException("Ошибка чтения: " + e.getMessage());
         }
         return deps;
     }
     private static List<String> fetchFromRegistry(String packageName, String repoUrl) {
-        String version = getLatestVersion(packageName, repoUrl);
-        String depsUrl = repoUrl + "/" + packageName + "/" + version + "/dependencies";
-        String json = sendHttpGet(depsUrl);
-        return parseDependenciesFromJson(json);
+        try {
+            String version = getLatestVersion(packageName, repoUrl);
+            String depsUrl = repoUrl + "/" + packageName + "/" + version + "/dependencies";
+            String json = sendHttpGet(depsUrl);
+            return parseDependenciesFromJson(json);
+        } catch (Exception e) {
+            // Если пакет не найден или произошла ошибка сети, возвращаем пустой список
+            return new ArrayList<>();
+        }
     }
     private static String getLatestVersion(String packageName, String repoUrl) {
         String url = repoUrl + "/" + packageName;
@@ -104,11 +130,10 @@ public class DependencyVisualizer {
         if (matcher.find()) {
             return matcher.group(1);
         }
-        throw new RuntimeException("Не удалось определить версию пакета " + packageName);
+        throw new RuntimeException("Не удалось определить версию");
     }
     private static List<String> parseDependenciesFromJson(String json) {
         Set<String> deps = new LinkedHashSet<>();
-        // Ищем ID пакетов в массиве dependencies
         Matcher matcher = Pattern.compile("\"crate_id\":\"([^\"]+)\"").matcher(json);
         while (matcher.find()) {
             deps.add(matcher.group(1));
@@ -117,7 +142,7 @@ public class DependencyVisualizer {
     }
     private static String sendHttpGet(String urlString) {
         try {
-            URL url = new URL(urlString);
+            URL url = URI.create(urlString).toURL();
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setRequestProperty("User-Agent", "ConfigPractice22/1.0");
